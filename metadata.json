@@ -1,0 +1,10 @@
+{
+  "name": "Smart HR2",
+  "description": "نظام ذكي وشامل لإدارة الموارد البشرية والرواتب والعهد والحضور باللغة العربية مع دعم للذكاء الاصطناعي والتحليلات والوضع الليلي",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

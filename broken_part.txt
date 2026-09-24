@@ -1,0 +1,111 @@
+                            triggerNotify(
+                              `تم توليد مسير رواتب شهر ${selectedMonth} لعدد ${employees.length} موظف بنجاح.`,
+                            );
+                          }}
+                          className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md shadow-blue-500/20 transition-all flex items-center gap-2 mt-2 mx-auto"
+                        >
+                          <Plus className="w-4                    {/* Basic salary */}
+                    <td className="p-2 text-center">
+                      {isSpreadsheetMode && !isApproved ? (
+                        <div className="flex items-center justify-center gap-1">
+                          <input
+                            type="number"
+                            value={rec.baseSalary}
+                            onChange={(e) =>
+                              handleFieldChange(
+                                rec,
+                                "baseSalary",
+                                e.target.value,
+                              )
+                            }
+                            onFocus={(e) => e.target.select()}
+                            className="w-20 p-1.5 text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none dark:text-white"
+                          />
+                        </div>
+                      ) : (
+                        <span className="font-bold text-slate-800 dark:text-slate-200">
+                          {rec.baseSalary.toLocaleString()}
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Allowances */}
+                    <td className="p-2 text-center">
+                      {isSpreadsheetMode && !isApproved ? (
+                        <input
+                          type="number"
+                          value={rec.allowances}
+                          onChange={(e) =>
+                            handleFieldChange(rec, "allowances", e.target.value)
+                          }
+                          onFocus={(e) => e.target.select()}
+                          className="w-18 p-1.5 text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none dark:text-white"
+                        />
+                      ) : (
+                        <span className="font-bold text-emerald-600">
+                          +{rec.allowances.toLocaleString()}
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Overtime Total (Value) */}
+                    <td className="p-2 text-center">
+                      <span className="font-bold text-blue-600 dark:text-blue-400">
+                        +{rec.overtimePay.toLocaleString()}
+                      </span>
+                    </td> text-purple-600 dark:text-purple-300"
+                          />
+                        </div>
+                      ) : (
+                        <span className="font-bold text-purple-600 dark:text-purple-400">
+                          {nightHours}س{" "}
+                          <span className="text-[9px] text-slate-400 font-normal">
+                            (×2.0)
+                          </span>
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Friday Overtime Hours */}
+                    <td className="p-2 text-center">
+                      {isSpreadsheetMode && !isApproved ? (
+                        <div className="flex items-center justify-center gap-1">
+                          <input
+                            type="number"
+                            value={fridayHours}
+                            onChange={(e) =>
+                              handleFieldChange(
+                                rec,
+                                "fridayOvertimeHours",
+                                e.target.value,
+                              )
+                            }
+                            onFocus={(e) => e.target.select()}
+                            placeholder="0"
+                            className="w-14 p-1.5 text-center rounded-lg border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/30 dark:bg-emerald-950/20 font-bold text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none text-emerald-600 dark:text-emerald-300"
+                          />
+                        </div>
+                      ) : (
+                        <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                          {fridayHours}س{" "}
+                          <span className="text-[9px] text-slate-400 font-normal">
+                            (×2.0)
+                          </span>
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Incentives / Bonus */}
+                    <td className="p-2 text-center">
+                      {isSpreadsheetMode && !isApproved ? (
+                        <input
+                          type="number"
+                          value={bonusVal}
+                          onChange={(e) =>
+                            handleFieldChange(rec, "bonus", e.target.value)
+                          }
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
+                          className="w-16 p-1.5 text-center rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/30 dark:bg-amber-950/20 font-bold text-xs focus:ring-1 focus:ring-amber-500 focus:outline-none text-amber-600 dark:text-amber-300"
+                        />
+                      ) : (
