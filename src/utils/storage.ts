@@ -199,6 +199,10 @@ export function saveAttendanceRecords(records: AttendanceRecord[]) {
   safeSave(STORAGE_KEYS.ATTENDANCE, records);
 }
 
+export function loadAttendanceRecords(): AttendanceRecord[] {
+  return safeParse<AttendanceRecord[]>(STORAGE_KEYS.ATTENDANCE, initialAttendanceRecords);
+}
+
 export function savePayrollRecords(records: PayrollRecord[]) {
   safeSave(STORAGE_KEYS.PAYROLL, records);
 }

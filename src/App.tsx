@@ -72,22 +72,32 @@ import {
   saveTrainingNominations,
   saveBiometricDevices,
   saveBiometricLogs,
-  saveBiometricSettings
+  saveBiometricSettings,
+  loadAttendanceRecords,
+  STORAGE_KEYS
 } from './utils/storage';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return localStorage.getItem('isAuthenticated') === 'true';
   });
-  const [isKioskUser, setIsKioskUser] = useState<boolean>(false);
+  const [isKioskUser, setIsKioskUser] = useState<boolean>(() => {
+    return localStorage.getItem('isKioskUser') === 'true';
+  });
   const [isDemoUser, setIsDemoUser] = useState<boolean>(() => {
     return localStorage.getItem('isDemoUser') === 'true';
   });
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
 
-  // Clean up any stale kiosk lock on startup to guarantee opening on Dashboard
+  // Cross-tab synchronization for attendance records
   useEffect(() => {
-    localStorage.removeItem('isKioskUser');
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEYS.ATTENDANCE) {
+        setAttendanceRecords(loadAttendanceRecords());
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
   useEffect(() => {
@@ -423,14 +433,21 @@ export default function App() {
       const idx = prev.findIndex(
         (rec) =>
           rec.id === updatedRec.id ||
-          (rec.employeeId === updatedRec.employeeId && rec.date === updatedRec.date)
+          (rec.date === updatedRec.date && (
+            rec.employeeId === updatedRec.employeeId ||
+            (rec.employeeName && updatedRec.employeeName && rec.employeeName.trim() === updatedRec.employeeName.trim())
+          ))
       );
+      let updated: AttendanceRecord[];
       if (idx >= 0) {
         const copy = [...prev];
         copy[idx] = { ...copy[idx], ...updatedRec };
-        return copy;
+        updated = copy;
+      } else {
+        updated = [updatedRec, ...prev];
       }
-      return [...prev, updatedRec];
+      saveAttendanceRecords(updated);
+      return updated;
     });
   };
 
@@ -439,14 +456,21 @@ export default function App() {
       const idx = prev.findIndex(
         (rec) =>
           rec.id === newRec.id ||
-          (rec.employeeId === newRec.employeeId && rec.date === newRec.date)
+          (rec.date === newRec.date && (
+            rec.employeeId === newRec.employeeId ||
+            (rec.employeeName && newRec.employeeName && rec.employeeName.trim() === newRec.employeeName.trim())
+          ))
       );
+      let updated: AttendanceRecord[];
       if (idx >= 0) {
         const copy = [...prev];
         copy[idx] = { ...copy[idx], ...newRec };
-        return copy;
+        updated = copy;
+      } else {
+        updated = [newRec, ...prev];
       }
-      return [...prev, newRec];
+      saveAttendanceRecords(updated);
+      return updated;
     });
   };
 
@@ -689,9 +713,19 @@ export default function App() {
       window.history.replaceState(null, '', window.location.pathname);
     }
 
-    if (password === '1000' || password === '1001') {
+    if (password === '1000') {
       localStorage.setItem('isAuthenticated', 'true');
-      localStorage.removeItem('isKioskUser');
+      localStorage.setItem('isKioskUser', 'true');
+      localStorage.removeItem('isDemoUser');
+      setIsAuthenticated(true);
+      setIsKioskUser(true);
+      setIsDemoUser(false);
+      return { success: true };
+    }
+
+    if (password === '1001') {
+      localStorage.setItem('isAuthenticated', 'true');
+      localStorage.setItem('isKioskUser', 'false');
       localStorage.removeItem('isDemoUser');
       setIsAuthenticated(true);
       setIsKioskUser(false);

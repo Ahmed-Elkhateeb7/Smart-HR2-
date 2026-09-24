@@ -461,6 +461,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <span>فتح واجهة الموظف للمعاينة</span>
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm('هل أنت متأكد من رغبتك في فك ربط الموظف الحالي على هذا الجهاز؟ سيتيح ذلك اختيار وتثبيت موظف جديد لمرة واحدة عند الدخول برمز 1000.')) {
+                    localStorage.removeItem('kiosk_locked_emp_id');
+                    alert('تم فك القفل بنجاح.');
+                  }
+                }}
+                className="px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer border border-amber-300 dark:border-amber-800"
+                title="إعادة تعيين الموظف المقفل على هذا الجهاز لوضع 1000"
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-600" />
+                <span>إعادة ضبط قفل الموظف (وضع 1000)</span>
+              </button>
             </div>
           </div>
         </div>

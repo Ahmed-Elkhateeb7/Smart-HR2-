@@ -1296,7 +1296,16 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   const displayedAttendance = useMemo(() => {
     let list = !selectedDate ? attendance : attendance.filter((a) => a.date === selectedDate);
     if (selectedEmployeeId) {
-      list = list.filter((a) => a.employeeId === selectedEmployeeId);
+      const selectedEmp = employees?.find((e) => e.id === selectedEmployeeId);
+      list = list.filter(
+        (a) =>
+          a.employeeId === selectedEmployeeId ||
+          (selectedEmp && (
+            a.employeeId === selectedEmp.employeeCode ||
+            a.employeeId === `emp-dat-${selectedEmp.employeeCode}` ||
+            (a.employeeName && a.employeeName.trim() === selectedEmp.name.trim())
+          ))
+      );
     }
     if (filterOnlyMissingCheckouts) {
       list = list.filter((a) => !a.checkOut || a.checkOut === '-' || a.checkOut.trim() === '');
