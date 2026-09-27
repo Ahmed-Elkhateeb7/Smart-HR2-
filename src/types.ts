@@ -5,6 +5,7 @@ export type TabType =
   | 'attendance'
   | 'payroll'
   | 'loans-assets'
+  | 'cv-analysis'
   | 'ai-assistant'
   | 'reports'
   | 'settings'
@@ -357,5 +358,37 @@ export interface BiometricSyncSettings {
   matchBy?: string;
   debounceMinutes?: number;
   lastGlobalSync?: string;
+}
+
+export interface AtsCandidate {
+  rank: number;
+  candidate_id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  match_percentage: number;
+  key_strengths: string[];
+  gaps_or_weaknesses: string[];
+  ai_summary: string;
+}
+
+export interface AtsAnalysisResult {
+  total_analyzed: number;
+  top_candidates: AtsCandidate[];
+  analyzed_at?: string;
+  job_title?: string;
+  job_description_snippet?: string;
+}
+
+export interface UploadedCvFile {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  base64?: string;
+  text?: string;
+  uploadedAt: string;
+  status: 'ready' | 'processing' | 'analyzed' | 'error';
+  errorMessage?: string;
 }
 

@@ -19,7 +19,8 @@ import {
   Copy,
   AlertTriangle,
   Radio,
-  Sparkles
+  Sparkles,
+  Lock
 } from 'lucide-react';
 import { CompanySettings } from '../types';
 import { getCurrentUserLocation } from '../utils/geofence';

@@ -19,7 +19,8 @@ import {
   FileCheck,
   LogOut,
   GraduationCap,
-  Smartphone
+  Smartphone,
+  FileSearch
 } from 'lucide-react';
 import { TabType } from '../types';
 
@@ -114,6 +115,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'المساعد الذكي والوظائف',
       icon: Sparkles,
       highlight: true,
+    },
+    {
+      id: 'cv-analysis' as TabType,
+      label: 'تحليل السير الذاتية (ATS)',
+      icon: FileSearch,
+      highlight: true,
+      badge: 'جديد AI',
+      badgeColor: 'bg-emerald-600 text-white',
     },
     {
       id: 'reports' as TabType,

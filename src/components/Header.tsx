@@ -26,7 +26,8 @@ import {
   Filter,
   Check,
   Laptop,
-  GraduationCap
+  GraduationCap,
+  FileSearch
 } from 'lucide-react';
 import {
   SystemAlert,
@@ -136,6 +137,7 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'payroll' as TabType, title: 'جدول المرتبات', desc: 'مسيرات الأجور والرواتب والضرائب والتأمينات', icon: Calculator, keywords: 'راتب رواتب مرتبات أجور مفردات مسير صافي استحقاقات' },
     { id: 'loans-assets' as TabType, title: 'السلف والعهد', desc: 'تتبع السلف المالية والأجهزة والمعدات المستلمة', icon: Briefcase, keywords: 'سلفة سلف قروض عهدة أصل لابتوب سيارة هاتف تسليم' },
     { id: 'ai-assistant' as TabType, title: 'المساعد الذكي', desc: 'توليد التوصيف الوظيفي ومؤشرات الأداء AI', icon: Sparkles, keywords: 'ذكاء اصطناعي مساعد توليد وظيفة توصيف kpi مقابلة' },
+    { id: 'cv-analysis' as TabType, title: 'تحليل السير الذاتية ATS', desc: 'فرز وتحليل ملفات PDF واختيار أفضل 10 مرشحين للوظيفة', icon: FileSearch, keywords: 'سيرة ذاتية cv resume pdf متقدمين توظيف ats فرز ترشيح مقابلة' },
     { id: 'reports' as TabType, title: 'التقارير التنفيذية KPIs', desc: 'مؤشرات الأداء الرئيسية، معدل الدوران، وتوزيع الأقسام', icon: BarChart3, keywords: 'تقرير تقارير تصدير طباعة إحصاء بياني kpi دوران وظيفي أقسام' },
     { id: 'database' as TabType, title: 'قاعدة البيانات', desc: 'إدارة البيانات، النسخ الاحتياطي والاستعادة', icon: Database, keywords: 'قاعدة بيانات نسخ احتياطي تصدير استيراد حفظ تصفير' },
     { id: 'documents' as TabType, title: 'الوثائق المعتمدة', desc: 'أرشيف المستندات والشهادات والعقود الرسمية', icon: FileText, keywords: 'مستند وثيقة عقد شهادة هوية ملف بي دي اف pdf' },

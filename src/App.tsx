@@ -9,6 +9,7 @@ import { AttendanceView } from './components/AttendanceView';
 import { PayrollView } from './components/PayrollView';
 import { LoansAssetsView } from './components/LoansAssetsView';
 import { AiAssistantView } from './components/AiAssistantView';
+import { CvAnalysisView } from './components/CvAnalysisView';
 import { ReportsView } from './components/ReportsView';
 import { SettingsView } from './components/SettingsView';
 import { DatabaseView } from './components/DatabaseView';
@@ -996,6 +997,13 @@ export default function App() {
             <AiAssistantView />
           )}
 
+          {(activeTab === 'cv-analysis' || (activeTab as string) === 'cv_analysis') && (
+            <CvAnalysisView
+              onAddEmployee={handleAddEmployee}
+              onNavigateTab={(tab) => setActiveTab(tab as TabType)}
+            />
+          )}
+
           {activeTab === 'reports' && (
             <ReportsView
               departments={departments}
@@ -1039,6 +1047,7 @@ export default function App() {
               setCurrencySymbol={setCurrencySymbol}
               companySettings={companySettings}
               onUpdateCompanySettings={setCompanySettings}
+              onOpenMobilePortal={() => setActiveTab('mobile-attendance')}
             />
           )}
 
