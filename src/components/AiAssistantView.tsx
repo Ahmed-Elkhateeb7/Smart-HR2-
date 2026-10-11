@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Sparkles,
   MessageSquare,
@@ -12,17 +12,47 @@ import {
   DollarSign,
   Bot,
   User,
-  Loader2
+  Loader2,
+  RotateCcw,
+  Calculator,
+  Users,
+  ShieldCheck,
+  Clock,
+  HelpCircle
 } from 'lucide-react';
+import {
+  Employee,
+  AttendanceRecord,
+  PayrollRecord,
+  Loan,
+  Asset,
+  Department
+} from '../types';
 
 interface AiAssistantViewProps {
   onApplyJdToOnboarding?: (jdTitle: string) => void;
+  employees?: Employee[];
+  attendance?: AttendanceRecord[];
+  payroll?: PayrollRecord[];
+  loans?: Loan[];
+  assets?: Asset[];
+  departments?: Department[];
+  currencySymbol?: string;
 }
 
+const INITIAL_BOT_MESSAGE =
+  'مرحباً بك في المساعد الذكي التفاعلي لنظام Smart HR! 👋\n\nأنا متصل ببيانات شركتك الحية وجاهز لمساعدتك فوراً في:\n• الاستعلام عن أي موظف بالاسم أو الكود (الراتب، الحضور، السلف، العهد)\n• حساب مكافأة نهاية الخدمة، الساعات الإضافية (Overtime)، التأمينات والضرائب بأي أرقام تكتبها\n• شرح ضوابط الإجازات والجزاءات وفق قانون العمل\n• صياغة الخطابات الرسمية (لفت نظر، إنذار، شهادة خبرة، عقود) وأسئلة المقابلات\n\nاكتب سؤالك بالأسفل أو اختر أحد الاختصارات السريعة للبدء!';
+
 export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
-  onApplyJdToOnboarding,
+  employees = [],
+  attendance = [],
+  payroll = [],
+  loans = [],
+  assets = [],
+  departments = [],
+  currencySymbol = 'ج.م',
 }) => {
-  const [activeTab, setActiveTab] = useState<'jd_generator' | 'chat'>('jd_generator');
+  const [activeTab, setActiveTab] = useState<'jd_generator' | 'chat'>('chat');
 
   // JD Generator Form State
   const [jobTitle, setJobTitle] = useState('');
@@ -34,14 +64,23 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
   const [copiedJd, setCopiedJd] = useState(false);
 
   // Chat Assistant State
-  const [messages, setMessages] = useState<Array<{ sender: 'user' | 'bot'; text: string }>>([
+  const [messages, setMessages] = useState<Array<{ sender: 'user' | 'bot'; text: string; timestamp?: string }>>([
     {
       sender: 'bot',
-      text: 'مرحباً بك في المساعد الذكي Smart HR! 👋\nأنا هنا لمساعدتك في صياغة اللوائح الداخلية، حساب نهاية الخدمة، والإجابة عن كافة الاستفسارات المتعلقة بنظام العمل والموارد البشرية.',
+      text: INITIAL_BOT_MESSAGE,
+      timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
   const [chatInput, setChatInput] = useState('');
   const [isSendingChat, setIsSendingChat] = useState(false);
+  const [copiedMsgIdx, setCopiedMsgIdx] = useState<number | null>(null);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isSendingChat]);
 
   const handleGenerateJd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,7 +124,7 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
       const res = await fetch('/api/ai/job-description', {
         method: 'POST',
@@ -111,12 +150,14 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
     }
   };
 
-  const handleSendChat = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
+  const sendMessageText = async (textToSend: string) => {
+    const userMsg = textToSend.trim();
+    if (!userMsg || isSendingChat) return;
 
-    const userMsg = chatInput.trim();
-    setMessages((prev) => [...prev, { sender: 'user', text: userMsg }]);
+    const nowTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const updatedHistory = [...messages, { sender: 'user' as const, text: userMsg, timestamp: nowTime }];
+
+    setMessages(updatedHistory);
     setChatInput('');
     setIsSendingChat(true);
 
@@ -124,31 +165,70 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg }),
+        body: JSON.stringify({
+          message: userMsg,
+          history: updatedHistory,
+          hrContext: {
+            employees,
+            attendance,
+            payroll,
+            loans,
+            assets,
+            departments,
+            currencySymbol,
+          },
+        }),
       });
+
       const data = await res.json();
+      const replyTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+
       if (data.success && data.reply) {
-        setMessages((prev) => [...prev, { sender: 'bot', text: data.reply }]);
+        setMessages((prev) => [...prev, { sender: 'bot', text: data.reply, timestamp: replyTime }]);
       } else {
         setMessages((prev) => [
           ...prev,
           {
             sender: 'bot',
-            text: 'بناءً على لوائح نظام العمل: يتم احتساب ساعات العمل الإضافي بنسبة 100% من الأجر الأساسي + 50% كبدل إضافي (أجر الوقت الإضافي 1.5x). كما يجب ألا تتجاوز ساعات العمل الفعلية 8 ساعات يومياً.',
+            text: `بخصوص "${userMsg}": يوجد حالياً ${employees.length} موظف مسجل في النظام. يمكنك سؤالي عن بيانات أي موظف بالاسم، أو طلب حساب نهاية الخدمة، التأمينات، الإضافي، أو صياغة خطاب إداري وسأجيبك بالتفصيل.`,
+            timestamp: replyTime,
           },
         ]);
       }
     } catch {
+      const replyTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
       setMessages((prev) => [
         ...prev,
         {
           sender: 'bot',
-          text: 'تم استلام سؤالك! يمكنك مراجعة شاشة الرواتب لاعتماد المستحقات بعد التأكد من تطابق سجلات الحضور والسلف.',
+          text: `تعذر الاتصال بالخادم حالياً للرد على: "${userMsg}". يرجى المحاولة مرة أخرى بعد لحظات.`,
+          timestamp: replyTime,
         },
       ]);
     } finally {
       setIsSendingChat(false);
     }
+  };
+
+  const handleSendChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await sendMessageText(chatInput);
+  };
+
+  const handleResetChat = () => {
+    setMessages([
+      {
+        sender: 'bot',
+        text: INITIAL_BOT_MESSAGE,
+        timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      },
+    ]);
+  };
+
+  const handleCopyMessage = (text: string, idx: number) => {
+    navigator.clipboard.writeText(text);
+    setCopiedMsgIdx(idx);
+    setTimeout(() => setCopiedMsgIdx(null), 2000);
   };
 
   const copyJdToClipboard = () => {
@@ -160,6 +240,17 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
     setTimeout(() => setCopiedJd(false), 2000);
   };
 
+  const quickPrompts = [
+    { label: '📊 إحصائيات الموظفين والرواتب', prompt: 'اعطني ملخص وإحصائيات الموظفين والرواتب في النظام', icon: Users },
+    { label: '🧮 حساب نهاية الخدمة', prompt: 'احسب مكافأة نهاية الخدمة لراتب 15000 بعد 7 سنوات خدمة', icon: Calculator },
+    { label: '⏱️ حساب الساعات الإضافية', prompt: 'احسب أجر 12 ساعة عمل إضافي لراتب 14000', icon: Clock },
+    { label: '🛡️ التأمينات وصافي الراتب', prompt: 'احسب التأمينات الاجتماعية وضريبة كسب العمل لراتب 18000', icon: ShieldCheck },
+    { label: '🌴 ضوابط وأرصدة الإجازات', prompt: 'ما هي ضوابط وأرصدة الإجازات السنوية والعارضة والمرضية؟', icon: HelpCircle },
+    { label: '📄 نموذج لفت نظر / إنذار', prompt: 'اكتب لي نموذج خطاب لفت نظر رسمي بسبب تكرار التأخير', icon: FileText },
+    { label: '📜 نموذج شهادة خبرة', prompt: 'اكتب لي نموذج شهادة خبرة معتمدة لموظف', icon: Award },
+    { label: '💳 تقرير السلف والعهد', prompt: 'اعرض لي تقرير السلف النشطة والعهد المسلمة للموظفين', icon: DollarSign },
+  ];
+
   return (
     <div className="space-y-6 pb-10">
       {/* Header & Sub-Tab Navigation */}
@@ -170,14 +261,25 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
             <span>المساعد الذكي وتوصيف الوظائف (Smart AI Assistant)</span>
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            توليد التوصيف الوظيفي ومؤشرات الأداء KPI's بالذكاء الاصطناعي والإجابة عن استفسارات الموارد البشرية.
+            محادثة تفاعلية متصلة ببيانات شركتك الحية، حسابات قوانين العمل، وتوليد التوصيف الوظيفي ومؤشرات KPI's.
           </p>
         </div>
 
         <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-700 shrink-0">
           <button
+            onClick={() => setActiveTab('chat')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'chat'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+            }`}
+          >
+            <MessageSquare className="w-4 h-4" />
+            <span>مساعد HR الشات التفاعلي</span>
+          </button>
+          <button
             onClick={() => setActiveTab('jd_generator')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'jd_generator'
                 ? 'bg-blue-600 text-white shadow-sm'
                 : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
@@ -185,17 +287,6 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
           >
             <FileText className="w-4 h-4" />
             <span>مولد التوصيف الوظيفي</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('chat')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-              activeTab === 'chat'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
-            }`}
-          >
-            <MessageSquare className="w-4 h-4" />
-            <span>مساعد HR الشات الذكي</span>
           </button>
         </div>
       </div>
@@ -231,6 +322,7 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
                   type="text"
                   value={department}
                   onChange={(e) => setDepartment(e.target.value)}
+                  placeholder="مثال: تكنولوجيا المعلومات، الإدارة المالية"
                   className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                 />
               </div>
@@ -241,6 +333,7 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
                   type="text"
                   value={seniorityLevel}
                   onChange={(e) => setSeniorityLevel(e.target.value)}
+                  placeholder="مثال: خبرة 3-5 سنوات / مستوى أول"
                   className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                 />
               </div>
@@ -251,6 +344,7 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
                   rows={3}
                   value={keySkills}
                   onChange={(e) => setKeySkills(e.target.value)}
+                  placeholder="افصل بين المهارات بفاصلة..."
                   className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                 />
               </div>
@@ -258,7 +352,7 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
               <button
                 type="submit"
                 disabled={isGeneratingJd}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-xs shadow-sm shadow-blue-500/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-xs shadow-sm shadow-blue-500/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
               >
                 {isGeneratingJd ? (
                   <>
@@ -292,7 +386,7 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
 
                   <button
                     onClick={copyJdToClipboard}
-                    className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-slate-800 dark:text-slate-200 font-bold flex items-center gap-1.5 transition-colors"
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-slate-800 dark:text-slate-200 font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
                   >
                     {copiedJd ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
                     <span>{copiedJd ? 'تم النسخ!' : 'نسخ التوصيف'}</span>
@@ -373,8 +467,41 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
           </div>
         </div>
       ) : (
-        /* Chat Assistant Tab */
-        <div className="p-6 rounded-3xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-xs flex flex-col h-[650px]">
+        /* Interactive Chat Assistant Tab */
+        <div className="p-6 rounded-3xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-xs flex flex-col h-[680px]">
+          {/* Chat Top Bar */}
+          <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100 dark:border-slate-700">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-xs">
+                <Bot className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">
+                    مساعد الموارد البشرية الذكي (Smart HR Bot)
+                  </h3>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                    متصل بـ {employees.length} موظف
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  يتفاعل مع أسئلتك الحرة، يحسب المستحقات بالأرقام، ويستعلم عن موظفي النظام لحظياً
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleResetChat}
+              className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="بدء محادثة جديدة"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>محادثة جديدة</span>
+            </button>
+          </div>
+
           {/* Chat Messages Log */}
           <div className="flex-1 overflow-y-auto space-y-4 pr-2 pl-2">
             {messages.map((msg, index) => (
@@ -385,63 +512,93 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
                 }`}
               >
                 <div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 font-bold text-white ${
+                  className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 font-bold text-white shadow-xs ${
                     msg.sender === 'user' ? 'bg-blue-600' : 'bg-gradient-to-tr from-amber-500 to-indigo-600'
                   }`}
                 >
                   {msg.sender === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
                 </div>
 
-                <div
-                  className={`max-w-xl p-4 rounded-2xl leading-relaxed font-medium whitespace-pre-wrap ${
-                    msg.sender === 'user'
-                      ? 'bg-blue-600 text-white rounded-tr-none shadow-sm'
-                      : 'bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 rounded-tl-none border border-slate-200 dark:border-slate-700'
-                  }`}
-                >
-                  {msg.text}
+                <div className="flex flex-col gap-1 max-w-2xl">
+                  <div
+                    className={`p-4 rounded-2xl leading-relaxed font-medium whitespace-pre-wrap ${
+                      msg.sender === 'user'
+                        ? 'bg-blue-600 text-white rounded-tr-none shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 rounded-tl-none border border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    {msg.text}
+                  </div>
+
+                  <div className={`flex items-center gap-2 px-1 text-[10px] text-slate-400 ${msg.sender === 'user' ? 'justify-end' : 'justify-between'}`}>
+                    {msg.timestamp && <span>{msg.timestamp}</span>}
+                    {msg.sender === 'bot' && (
+                      <button
+                        type="button"
+                        onClick={() => handleCopyMessage(msg.text, index)}
+                        className="hover:text-blue-600 flex items-center gap-1 font-bold cursor-pointer"
+                        title="نسخ الرد"
+                      >
+                        {copiedMsgIdx === index ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-500" />
+                            <span className="text-emerald-500">تم النسخ</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>نسخ</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
+
             {isSendingChat && (
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-                <span>جاري كتابة الإجابة من المساعد الذكي...</span>
+              <div className="flex items-center gap-2.5 text-xs text-blue-600 dark:text-blue-400 bg-blue-50/60 dark:bg-blue-950/30 w-fit px-4 py-2.5 rounded-2xl border border-blue-100 dark:border-blue-900">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="font-bold">جاري تحليل سؤالك وإعداد الإجابة...</span>
               </div>
             )}
+            <div ref={messagesEndRef} />
           </div>
 
-          {/* Quick Prompt Chips */}
-          <div className="flex items-center gap-2 overflow-x-auto py-3 border-t border-slate-100 dark:border-slate-700 text-[11px]">
-            <span className="text-slate-400 font-bold shrink-0">مقترحات:</span>
-            <button
-              onClick={() => setChatInput('ما هي نسبة حسم الساعات الإضافية ورسوم العمل الجزئي؟')}
-              className="px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-blue-100 font-bold shrink-0"
-            >
-              حساب الساعات الإضافية Overtime
-            </button>
-            <button
-              onClick={() => setChatInput('كيف يتم إقفال جدول المرتبات في النظام وتفادي الأخطاء؟')}
-              className="px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-blue-100 font-bold shrink-0"
-            >
-              اعتماد كشف المرتبات
-            </button>
+          {/* Interactive Quick Action Prompts */}
+          <div className="pt-3 pb-2 border-t border-slate-100 dark:border-slate-700">
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 text-[11px] no-scrollbar">
+              <span className="text-slate-400 font-bold shrink-0 ml-1">اسأل فوراً:</span>
+              {quickPrompts.map((item, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  disabled={isSendingChat}
+                  onClick={() => sendMessageText(item.prompt)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-700/80 text-slate-700 dark:text-slate-200 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 font-bold shrink-0 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Chat Input Bar */}
-          <form onSubmit={handleSendChat} className="flex items-center gap-2 pt-2">
+          <form onSubmit={handleSendChat} className="flex items-center gap-2 pt-1">
             <input
               type="text"
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
-              placeholder="اكتب سؤالك لإدارة الموارد البشرية هنا..."
-              className="flex-1 p-3 text-xs rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+              placeholder="اسأل عن اسم موظف، أو اكتب مثلاً: احسب نهاية الخدمة لراتب 20000 بعد 6 سنوات..."
+              className="flex-1 p-3.5 text-xs rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold"
             />
             <button
               type="submit"
               disabled={isSendingChat || !chatInput.trim()}
-              className="p-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-sm disabled:opacity-50 transition-all"
+              className="px-5 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm disabled:opacity-50 transition-all flex items-center gap-1.5 cursor-pointer"
             >
+              <span>إرسال</span>
               <Send className="w-4 h-4 rtl:rotate-180" />
             </button>
           </form>

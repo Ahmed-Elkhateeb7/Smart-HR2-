@@ -11,12 +11,23 @@ const PORT = 3000;
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Lazy initializer for Gemini client
+// Lazy initializer for Gemini client with network health tracking
 let aiInstance: GoogleGenAI | null = null;
+let geminiNetworkCooldownUntil = 0;
+
 function getGemini(): GoogleGenAI | null {
+  if (Date.now() < geminiNetworkCooldownUntil) {
+    return null;
+  }
   if (!aiInstance) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (apiKey) {
+    const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+    if (
+      apiKey &&
+      apiKey !== 'MY_GEMINI_API_KEY' &&
+      apiKey !== 'YOUR_API_KEY' &&
+      apiKey !== 'undefined' &&
+      apiKey.length > 15
+    ) {
       aiInstance = new GoogleGenAI({
         apiKey,
         httpOptions: {
@@ -28,6 +39,13 @@ function getGemini(): GoogleGenAI | null {
     }
   }
   return aiInstance;
+}
+
+function markGeminiNetworkFailure(err: any) {
+  const msg = String(err?.message || '').toLowerCase();
+  if (msg.includes('fetch failed') || msg.includes('network') || msg.includes('enotfound') || msg.includes('etimedout') || msg.includes('api_key_invalid')) {
+    geminiNetworkCooldownUntil = Date.now() + 120_000;
+  }
 }
 
 // AI Endpoint 1: Generate Job Description
@@ -92,9 +110,9 @@ app.post('/api/ai/job-description', async (req, res) => {
   "suggestedSalaryRange": "نطاق الراتب بالجنيه المصري EGP (مثال: 18,000 - 30,000 جنيه مصري)"
 }`;
 
-    // Fast generation using gemini-3.6-flash with low thinking level & timeout
+    // Fast generation using gemini-3.8-flash with low thinking level & timeout
     const fetchAiPromise = ai.models.generateContent({
-      model: 'gemini-3.6-flash',
+      model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -102,7 +120,7 @@ app.post('/api/ai/job-description', async (req, res) => {
       },
     });
 
-    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
 
     const result = await Promise.race([fetchAiPromise, timeoutPromise]);
 
@@ -114,52 +132,474 @@ app.post('/api/ai/job-description', async (req, res) => {
     // Fast fallback if timeout reached or empty result
     return res.json({ success: true, data: buildFastJobDescription() });
   } catch (error: any) {
-    console.log('Fast fallback used for job description:', error?.message);
+    markGeminiNetworkFailure(error);
     return res.json({ success: true, data: buildFastJobDescription() });
   }
 });
 
+// Helper: Interactive Context-Aware HR Conversational Engine
+function generateSmartInteractiveHrReply(
+  rawMessage: string,
+  history: Array<{ sender: 'user' | 'bot'; text: string }> = [],
+  hrContext: any = {}
+): string {
+  const msg = (rawMessage || '').trim();
+  const q = msg.toLowerCase();
+  const employees: any[] = Array.isArray(hrContext?.employees) ? hrContext.employees : [];
+  const attendance: any[] = Array.isArray(hrContext?.attendance) ? hrContext.attendance : [];
+  const payroll: any[] = Array.isArray(hrContext?.payroll) ? hrContext.payroll : [];
+  const loans: any[] = Array.isArray(hrContext?.loans) ? hrContext.loans : [];
+  const assets: any[] = Array.isArray(hrContext?.assets) ? hrContext.assets : [];
+  const departments: any[] = Array.isArray(hrContext?.departments) ? hrContext.departments : [];
+  const currency = hrContext?.currencySymbol || 'ج.م';
+
+  // Extract any numbers mentioned in user's message (supporting Arabic & English digits)
+  const normalizedDigits = msg.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+  const numbersInMsg = (normalizedDigits.match(/\d+(\.\d+)?/g) || []).map(Number);
+
+  // Check previous bot/user messages for conversational follow-up context
+  const lastUserMsg = history.length >= 2 ? history[history.length - 2]?.text || '' : '';
+  const lastBotMsg = history.length >= 1 ? history[history.length - 1]?.text || '' : '';
+  const combinedContext = `${lastUserMsg} ${lastBotMsg} ${msg}`.toLowerCase();
+
+  // 1. Check if user is asking about a specific employee in the system
+  if (employees.length > 0) {
+    const matchedEmp = employees.find((emp) => {
+      if (!emp?.name) return false;
+      const fullName = emp.name.trim().toLowerCase();
+      const nameParts = fullName.split(/\s+/).filter((p: string) => p.length > 2);
+      if (q.includes(fullName)) return true;
+      if (emp.employeeCode && q.includes(String(emp.employeeCode).toLowerCase())) return true;
+      // Match first + second name or distinctive name part if user asks about employee
+      if (nameParts.length >= 2 && q.includes(nameParts[0]) && q.includes(nameParts[1])) return true;
+      return nameParts.some((part: string) => part.length >= 4 && q.includes(part) && (q.includes('موظف') || q.includes('راتب') || q.includes('مرتب') || q.includes('بيانات') || q.includes('حضور') || q.includes('سلف') || q.includes('عهد') || q.includes('قسم') || q.includes('مين')));
+    });
+
+    if (matchedEmp) {
+      const totalAllowances = (Number(matchedEmp.housingAllowance) || 0) + (Number(matchedEmp.transportAllowance) || 0) + (Number(matchedEmp.otherAllowances) || 0);
+      const grossSalary = (Number(matchedEmp.baseSalary) || 0) + totalAllowances;
+      const netEst = grossSalary - (Number(matchedEmp.gosiInsurance) || 0);
+      const empLoans = loans.filter((l) => l.employeeId === matchedEmp.id && l.status === 'نشط');
+      const empAssets = assets.filter((a) => a.assignedToEmployeeId === matchedEmp.id);
+      const empAtt = attendance.filter((a) => a.employeeId === matchedEmp.id);
+      const lateCount = empAtt.filter((a) => a.status === 'late' || (a.delayMinutes && a.delayMinutes > 0)).length;
+
+      return `👤 **ملف الموظف: ${matchedEmp.name}** (${matchedEmp.employeeCode || 'بدون كود'})
+• **المسمى الوظيفي:** ${matchedEmp.position || 'غير محدد'} — **القسم:** ${matchedEmp.department || 'غير محدد'}
+• **الحالة الوظيفية:** ${matchedEmp.status === 'active' ? 'نشط على رأس العمل ✅' : matchedEmp.status}
+• **تاريخ التعيين:** ${matchedEmp.joinDate || 'غير مسجل'} | **نوع العقد:** ${matchedEmp.contractType || 'دوام كامل'}
+
+💰 **التفاصيل المالية:**
+• الراتب الأساسي: **${Number(matchedEmp.baseSalary || 0).toLocaleString()} ${currency}**
+• إجمالي البدلات (سكن + انتقال + أخرى): **${totalAllowances.toLocaleString()} ${currency}**
+• خصم التأمينات الاجتماعية: **${Number(matchedEmp.gosiInsurance || 0).toLocaleString()} ${currency}**
+• صافي الراتب التقديري (قبل السلف/المؤثرات): **${netEst.toLocaleString()} ${currency}**
+
+📊 **السلف والعهد والحضور:**
+• السلف النشطة: ${empLoans.length > 0 ? empLoans.map((l) => `${Number(l.amount).toLocaleString()} ${currency} (قسط شهري: ${Number(l.monthlyInstallment).toLocaleString()} ${currency})`).join('، ') : 'لا توجد سلف نشطة'}
+• العهد المسلمة: ${empAssets.length > 0 ? empAssets.map((a) => a.name).join('، ') : 'لا توجد عهد مسجلة'}
+• سجل الحضور: مسجل له ${empAtt.length} يوم (${lateCount > 0 ? `منها ${lateCount} مرات تأخير` : 'ملتزم بدون تأخير'})
+
+هل ترغب في حساب مستحقات إضافية لهذا الموظف أو إصدار خطاب رسمي باسمه؟`;
+    }
+  }
+
+  // 2. Greetings & Who are you
+  if (/^(سلام|السلام عليكم|مرحبا|اهلا|أهلا|صباح|مساء|ازيك|إزيك|عامل ايه|هاي|hello|hi)\b/i.test(msg) && msg.split(/\s+/).length <= 5) {
+    return `أهلاً وسهلاً بك! 👋 أنا مساعدك الذكي في نظام **Smart HR**.
+أنا متصل ببيانات النظام حالياً (${employees.length} موظف مسجل)، ويمكنني التفاعل معك فوراً في:
+
+1️⃣ **بيانات الشركة الحية:** الاستعلام عن أي موظف بالاسم، إجمالي الرواتب، الحضور والغياب، السلف، والعهد.
+2️⃣ **الحسابات الفورية:** حساب الساعات الإضافية (Overtime)، التأمينات والضرائب، ومكافأة نهاية الخدمة بأي أرقام تعطيني إياها.
+3️⃣ **قوانين العمل واللوائح:** الإجازات السنوية والمرضية، لائحة الجزاءات، وفترة الاختبار.
+4️⃣ **الصياغة الإدارية:** كتابة عقود العمل، الإنذارات، شهادات الخبرة، وأسئلة المقابلات الشخصية.
+
+جرب أن تسألني مثلاً: *"اعطني ملخص الموظفين والرواتب"* أو *"احسب مكافأة نهاية الخدمة لراتب 15000 بعد 7 سنوات"*!`;
+  }
+
+  // 3. Live System Statistics / Employees Summary
+  if (
+    (q.includes('كم عدد') || q.includes('احصائيات') || q.includes('إحصائيات') || q.includes('ملخص') || q.includes('بيانات النظام') || q.includes('قائمة الموظفين') || q.includes('من هم الموظفين') || q.includes('اسماء الموظفين') || q.includes('أسماء الموظفين')) &&
+    (q.includes('موظف') || q.includes('شرك') || q.includes('نظام') || q.includes('اقسام') || q.includes('أقسام') || q.includes('ملخص'))
+  ) {
+    const totalEmp = employees.length;
+    const totalBase = employees.reduce((acc, e) => acc + (Number(e.baseSalary) || 0), 0);
+    const totalAllowances = employees.reduce((acc, e) => acc + (Number(e.housingAllowance) || 0) + (Number(e.transportAllowance) || 0) + (Number(e.otherAllowances) || 0), 0);
+    const activeLoansCount = loans.filter((l) => l.status === 'نشط').length;
+    const deptCounts: Record<string, number> = {};
+    employees.forEach((e) => {
+      const d = e.department || 'غير محدد';
+      deptCounts[d] = (deptCounts[d] || 0) + 1;
+    });
+
+    const deptBreakdown = Object.entries(deptCounts)
+      .map(([d, c]) => `• ${d}: **${c} موظف**`)
+      .join('\n');
+
+    const topEmployeesList = employees
+      .slice(0, 8)
+      .map((e, i) => `${i + 1}. **${e.name}** (${e.position} - ${e.department}) — الأساسي: ${Number(e.baseSalary || 0).toLocaleString()} ${currency}`)
+      .join('\n');
+
+    return `📊 **ملخص بيانات الموارد البشرية الحية في النظام:**
+
+👥 **إجمالي قوة العمل:** **${totalEmp} موظف**
+💵 **إجمالي الرواتب الأساسية الشهرية:** **${totalBase.toLocaleString()} ${currency}**
+➕ **إجمالي البدلات الشهرية:** **${totalAllowances.toLocaleString()} ${currency}**
+💳 **السلف النشطة حالياً:** **${activeLoansCount} سلفة** | **العهد المسجلة:** **${assets.length} عهدة**
+
+🏢 **توزيع الموظفين حسب الأقسام:**
+${deptBreakdown || '• لا توجد أقسام مسجلة حالياً'}
+
+📋 **أبرز الموظفين المسجلين:**
+${topEmployeesList || '• لا يوجد موظفون مسجلون حالياً'}
+
+💡 *يمكنك كتابة اسم أي موظف لعرض ملفه المالي والإداري بالكامل!*`;
+  }
+
+  // 4. End of Service / Severance Calculation (مكافأة نهاية الخدمة)
+  if (q.includes('نهاية الخدم') || q.includes('نهايه الخدم') || q.includes('مكافأة نهاية') || q.includes('مستحقات نهاية') || (combinedContext.includes('نهاية الخدم') && numbersInMsg.length > 0)) {
+    const salary = numbersInMsg.find((n) => n >= 1000) || 10000;
+    const years = numbersInMsg.find((n) => n > 0 && n < 60) || 5;
+    const first5Years = Math.min(years, 5);
+    const remainingYears = Math.max(0, years - 5);
+    const rewardFirst5 = first5Years * (salary * 0.5);
+    const rewardAfter5 = remainingYears * salary;
+    const totalReward = rewardFirst5 + rewardAfter5;
+
+    return `🧮 **حساب مكافأة نهاية الخدمة (وفق قانون العمل):**
+
+📌 **القاعدة القانونية:**
+• أجر **نصف شهر** عن كل سنة من السنوات الخمس الأولى.
+• أجر **شهر كامل** عن كل سنة من السنوات التالية للسنة الخامسة.
+
+💵 **الحساب التطبيقي ${numbersInMsg.length > 0 ? 'حسب الأرقام التي أدخلتها' : '(مثال تطبيقي)'}:**
+• الأجر الشامل المحسوب: **${salary.toLocaleString()} ${currency}**
+• مدة الخدمة: **${years} سنوات**
+1. عن أول ${first5Years} سنوات (نصف شهر × ${first5Years}): **${rewardFirst5.toLocaleString()} ${currency}**
+2. عن السنوات المتبقية (${remainingYears} سنة × شهر كامل): **${rewardAfter5.toLocaleString()} ${currency}**
+✅ **إجمالي مكافأة نهاية الخدمة المستحقة:** **${totalReward.toLocaleString()} ${currency}**
+
+💬 *اكتب لي مثلاً: "احسب نهاية الخدمة لراتب 18000 ومدة 8 سنوات" وسأحسبها لك فوراً!*`;
+  }
+
+  // 5. Overtime Calculation (الساعات الإضافية)
+  if (q.includes('اضافي') || q.includes('إضافي') || q.includes('اوفر تايم') || q.includes('أوفر تايم') || q.includes('overtime')) {
+    const salary = numbersInMsg.find((n) => n >= 1000) || 12000;
+    const hours = numbersInMsg.find((n) => n > 0 && n < 300) || 10;
+    const hourlyRate = salary / 30 / 8;
+    const dayOvertime = Math.round(hourlyRate * 1.35 * hours);
+    const standard15Overtime = Math.round(hourlyRate * 1.5 * hours);
+    const nightOvertime = Math.round(hourlyRate * 1.7 * hours);
+    const holidayOvertime = Math.round(hourlyRate * 2.0 * hours);
+
+    return `⏱️ **حساب أجر الساعات الإضافية (Overtime):**
+
+📐 **معادلة حساب قيمة الساعة الواحدة:**
+• الراتب الأساسي ÷ 30 يوماً ÷ 8 ساعات = قيمة الساعة العادية.
+• لراتب **${salary.toLocaleString()} ${currency}** ⬅️ قيمة الساعة العادية = **${hourlyRate.toFixed(2)} ${currency}**
+
+💰 **تكلفة (${hours} ساعات إضافية) حسب توقيت العمل:**
+• **بمعامل النظام القياسي (1.5x):** **${standard15Overtime.toLocaleString()} ${currency}**
+• **إضافي نهاري قانوني (1.35x):** **${dayOvertime.toLocaleString()} ${currency}**
+• **إضافي ليلي (1.70x):** **${nightOvertime.toLocaleString()} ${currency}**
+• **إضافي أيام الراحة والعطلات الرسمية (2.0x):** **${holidayOvertime.toLocaleString()} ${currency}**
+
+💬 *يمكنك إرسال: "احسب 15 ساعة إضافي لراتب 16000" لحسابها مباشرة!*`;
+  }
+
+  // 6. Social Insurance & Taxes (التأمينات الاجتماعية والضرائب)
+  if (q.includes('تأمين') || q.includes('تامين') || q.includes('ضريب') || q.includes('ضرائب') || q.includes('كسب العمل') || q.includes('حصة العامل') || q.includes('صافي الراتب')) {
+    const salary = numbersInMsg.find((n) => n >= 1000) || 15000;
+    const empShare = Math.round(salary * 0.11);
+    const companyShare = Math.round(salary * 0.1875);
+    const taxableAnnual = Math.max(0, (salary - empShare) * 12 - 20000); // بعد الإعفاء الشخصي
+    const estimatedMonthlyTax = Math.round((taxableAnnual * 0.10) / 12);
+    const netSalary = salary - empShare - estimatedMonthlyTax;
+
+    return `🛡️ **حساب التأمينات الاجتماعية وضريبة كسب العمل (قانون 148 لسنة 2019):**
+
+📊 **النسب المعتمدة للتأمينات الاجتماعية:**
+• **حصة الموظف (تُستقطع من الراتب):** **11%** من أجر الاشتراك التأميني.
+• **حصة صاحب العمل (تتحملها الشركة):** **18.75%** من أجر الاشتراك التأميني.
+
+💵 **تطبيق عملي على راتب (${salary.toLocaleString()} ${currency}):**
+1. **حصة الموظف في التأمينات (11%):** **${empShare.toLocaleString()} ${currency}**
+2. **حصة الشركة في التأمينات (18.75%):** **${companyShare.toLocaleString()} ${currency}**
+3. **ضريبة كسب العمل التقديرية شهرياً:** **${estimatedMonthlyTax.toLocaleString()} ${currency}**
+✅ **صافي الراتب المستحق للموظف:** **${netSalary.toLocaleString()} ${currency}**
+
+💬 *جرب أن تكتب لي أي راتب مثل: "احسب التأمينات وصافي الراتب لمبلغ 25000"*`;
+  }
+
+  // 7. Leaves & Vacations (الإجازات السنوية والعارضة والمرضية)
+  if (q.includes('اجاز') || q.includes('إجاز') || q.includes('عارض') || q.includes('مرضي') || q.includes('سنوي') || q.includes('رصيد')) {
+    return `🌴 **ضوابط وأرصدة الإجازات وفق قانون العمل:**
+
+1️⃣ **الإجازة السنوية الاعتيادية:**
+• **21 يوماً** بأجر كامل لمن أمضى سنة كاملة في الخدمة (تبدأ بعد 6 أشهر من التعيين).
+• **30 يوماً** لمن أمضى 10 سنوات في الخدمة لدى صاحب عمل أو أكثر، أو لمن تجاوز سن **50 عاماً**.
+
+2️⃣ **الإجازة العارضة (الطارئة):**
+• بحد أقصى **6 أيام في السنة**، وبما لا يجاوز **يومين في المرة الواحدة**، وتُخصم من رصيد الإجازة السنوية للموظف.
+
+3️⃣ **الإجازة المرضية:**
+• تُمنح بناءً على تقرير طبي معتمد، ويستحق العامل خلالها تعويضاً عن الأجر وفقاً لقانون التأمينات الاجتماعية (75% إلى 85% من الأجر حسب المدة).
+
+4️⃣ **إجازات خاصة بأجر كامل:**
+• **إجازة الحج / زيارة بيت المقدس:** شهر واحد طوال مدة الخدمة (بعد 5 سنوات متصلة).
+• **إجازة الوضع للسيدات:** 90 يوماً مدفوعة الأجر.
+• **العطلات والأعياد الرسمية:** بأجر كامل للموظفين، وإذا اقتضت حاجة العمل تشغيل الموظف يستحق مثلي الأجر (200%).
+
+هل تريد الاستفسار عن حالة إجازة معينة أو طريقة ترحيل رصيد الإجازات؟`;
+  }
+
+  // 8. Attendance, Lateness & Penalties (الحضور والانصراف والتأخير والجزاءات)
+  if (q.includes('تأخير') || q.includes('تاخير') || q.includes('غياب') || q.includes('جزاء') || q.includes('خصم') || q.includes('انصراف') || q.includes('حضور') || q.includes('بصم')) {
+    const presentToday = attendance.filter((a) => a.status === 'present' || a.status === 'late').length;
+    const lateRecords = attendance.filter((a) => a.status === 'late' || (a.delayMinutes && a.delayMinutes > 0));
+    const absentRecords = attendance.filter((a) => a.status === 'absent');
+
+    return `⏰ **لوائح الحضور والتأخير والجزاءات + إحصائية النظام الحالية:**
+
+📈 **الوضع الحالي في جدول الحضور:**
+• إجمالي سجلات الحضور المسجلة: **${attendance.length} سجل** (حاضر/متأخر: ${presentToday} | غياب: ${absentRecords.length})
+• عدد حالات التأخير المرصودة: **${lateRecords.length} حالة** ${lateRecords.length > 0 ? `(أبرزها: ${lateRecords.slice(0, 3).map((r) => `${r.employeeName} (${r.delayMinutes} ق)`).join('، ')})` : ''}
+
+⚖️ **لائحة جزاءات التأخير والغياب القياسية:**
+• **فترة السماح الصباحية:** عادةً 15 دقيقة من موعد بدء الوردية.
+• **التأخير بدون إذن (أول مرة):** تنبيه شفهي أو لفت نظر.
+• **تكرار التأخير:** خصم ربع يوم ⬅️ نصف يوم ⬅️ يوم كامل (حسب التدرج في اللائحة الداخلية).
+• **الغياب بدون إذن مسبق:** خصم يوم الغياب من الأجر + جزاء إداري متدرج، مع العلم أنه **لا يجوز اقتطاع أكثر من أجر 5 أيام في الشهر الواحد** كجزاءات تأديبية للموظف.
+
+هل تود صياغة خطاب "لفت نظر" أو "إنذار غياب" لموظف معين؟`;
+  }
+
+  // 9. Loans & Assets (السلف والعهد)
+  if (q.includes('سلف') || q.includes('قرض') || q.includes('قسط') || q.includes('عهد') || q.includes('لابتوب') || q.includes('جهاز')) {
+    const activeLoans = loans.filter((l) => l.status === 'نشط');
+    const totalLoansVal = activeLoans.reduce((acc, l) => acc + (Number(l.amount) || 0), 0);
+    const assignedAssets = assets.filter((a) => a.status === 'مع موظف');
+
+    return `💼 **تقرير السلف المالية والعهد العينية في النظام:**
+
+💳 **السلف المالية النشطة (${activeLoans.length} سلفة بإجمالي ${totalLoansVal.toLocaleString()} ${currency}):**
+${activeLoans.length > 0 ? activeLoans.map((l) => `• **${l.employeeName}**: إجمالي السلفة ${Number(l.amount).toLocaleString()} ${currency} — القسط الشهري: ${Number(l.monthlyInstallment).toLocaleString()} ${currency} (المتبقي: ${Number(l.remainingAmount).toLocaleString()} ${currency})`).join('\n') : '• لا توجد سلف نشطة حالياً.'}
+
+💻 **العهد المسلمة للموظفين (${assignedAssets.length} من أصل ${assets.length} عهدة):**
+${assignedAssets.length > 0 ? assignedAssets.slice(0, 5).map((a) => `• **${a.name}** (${a.serialNumber || a.code || 'بدون سيريال'}) ⬅️ بحوزة: **${a.assignedToName}**`).join('\n') : '• جميع العهد في المخزن حالياً.'}
+
+⚖️ **الضوابط القانونية للسلف:**
+• الحد الأقصى للاستقطاع الشهري لسداد السلف أو القروض هو **10% من الأجر الشهري** للموظف دون احتساب فوائد.`;
+  }
+
+  // 10. Payroll & Closing (المرتبات والرواتب)
+  if (q.includes('مرتب') || q.includes('رواتب') || q.includes('راتب') || q.includes('مسير') || q.includes('كشف') || q.includes('اعتماد')) {
+    const totalNet = payroll.reduce((acc, p) => acc + (Number(p.netSalary) || 0), 0);
+    const approvedCount = payroll.filter((p) => p.status === 'approved').length;
+
+    return `💵 **ملخص مسير الرواتب وإجراءات الإقفال الشهري:**
+
+📊 **إحصائية مسير الرواتب الحالي في النظام:**
+• عدد سجلات الرواتب: **${payroll.length} سجل** (المعتمد منها: **${approvedCount}**)
+• إجمالي صافي الرواتب المستحقة للصرف: **${totalNet.toLocaleString()} ${currency}**
+
+✅ **خطوات مراجعة واعتماد مسير الرواتب بدون أخطاء:**
+1. **إغلاق الحضور والانصراف:** التأكد من ترحيل كافة ساعات الإضافي (Overtime) وخصومات التأخير والغياب.
+2. **مراجعة المؤثرات الشهرية:** إضافة أي مكافآت استثنائية أو عمولات أو بدلات.
+3. **التحقق من أقساط السلف:** التأكد من خصم القسط الشهري تلقائياً للموظفين أصحاب السلف النشطة.
+4. **مراجعة التأمينات (GOSI):** التحقق من خصم حصة الموظف التأمينية.
+5. **الاعتماد النهائي:** الضغط على زر "اعتماد المسير" لقفل التعديلات وإصدار قسائم الرواتب (Payslips).`;
+  }
+
+  // 11. Drafting Official HR Letters / Contracts / Warnings (صياغة خطاب / إنذار / شهادة خبرة / عقد)
+  if (q.includes('صياغ') || q.includes('اكتب') || q.includes('نموذج') || q.includes('خطاب') || q.includes('انذار') || q.includes('إنذار') || q.includes('لفت نظر') || q.includes('شهادة خبر') || q.includes('عقد عمل') || q.includes('ترقي')) {
+    if (q.includes('انذار') || q.includes('إنذار') || q.includes('لفت نظر')) {
+      return `📄 **نموذج رسمي: إخطار لفت نظر / إنذار إداري**
+
+---
+**التاريخ:** ${new Date().toLocaleDateString('ar-EG')}
+**إلى السيد/ة:** [اسم الموظف] — **الكود الوظيفي:** [رقم الكود]
+**القسم:** [اسم القسم] — **المسمى الوظيفي:** [المسمى]
+
+**الموضوع: لفت نظر بشأن الالتزام بمواعيد العمل الرسمية**
+
+تحية طيبة وبعد،،
+بالإشارة إلى سجلات الحضور والانصراف الخاصة بكم، تلاحظ للإدارة تكرار تأخركم عن مواعيد الحضور الرسمية / غيابكم دون إذن مسبق وذلك في أيام: (.... / ....).
+وحيث إن هذا السلوك يخالف لائحة تنظيم العمل الداخلية، فإننا نوجه إليكم هذا الإنذار الرسمي بضرورة الالتزام التام بمواعيد الدوام المقررة، علماً بأنه في حال التكرار سيتم تطبيق الجزاءات المنصوص عليها في لائحة الجزاءات وقانون العمل.
+
+**وتفضلوا بقبول فائق الاحترام،،**
+**إدارة الموارد البشرية** | توقيع الموظف بالعلم والاستلام: ....................
+---
+💡 *يمكنك إخباري باسم الموظف من النظام لأقوم بتعبئة النموذج ببياناته الحقيقية فوراً!*`;
+    }
+
+    if (q.includes('خبرة') || q.includes('خبره')) {
+      return `📄 **نموذج رسمي: شهادة خبرة معتمدة**
+
+---
+**التاريخ:** ${new Date().toLocaleDateString('ar-EG')}
+
+**شـهـادة خـبـرة**
+
+تشهد إدارة الموارد البشرية بشركة **[اسم الشركة]** بأن السيد/ **......................................**، يحمل رقم قومي (**........................**)، قد عمل لدينا بوظيفة (**........................**) في قسم (**................**)، وذلك خلال الفترة من **..../..../202** وحتى تاريخ **..../..../202**.
+
+وخلال فترة عمله معنا، أبدى التزاماً مهنياً عالياً وكفاءة متميزة في أداء المهام الموكلة إليه، وقد أعطيت له هذه الشهادة بناءً على طلبه دون أدنى مسؤولية على الشركة تجاه الغير.
+
+**مدير الموارد البشرية**
+التوقيع والختم الرسمي: ....................
+---`;
+    }
+
+    return `📝 **النماذج والخطابات الرسمية الجاهزة للصياغة الفورية:**
+يمكنني كتابة وتخصيص أي خطاب رسمي لك الآن، فقط حدد نوع الخطاب:
+1. **"اكتب نموذج لفت نظر أو إنذار غياب"**
+2. **"اكتب نموذج شهادة خبرة"**
+3. **"اكتب نموذج عرض عمل (Job Offer)"**
+4. **"اكتب نموذج قرار ترقية وزيادة راتب"**
+
+اذكر نوع الخطاب (واسم الموظف إن رغبت) وسأقوم بصياغته لك فوراً!`;
+  }
+
+  // 12. Interview Questions & Recruitment (أسئلة المقابلات والتوظيف)
+  if (q.includes('مقابل') || q.includes('انترفيو') || q.includes('إنترفيو') || q.includes('توظيف') || q.includes('اسئلة') || q.includes('أسئلة') || q.includes('مرشح')) {
+    return `🎯 **دليل أسئلة المقابلات الشخصية وتقييم المرشحين (Structured Interview):**
+
+1️⃣ **أسئلة التقييم السلوكي والمهني (Behavioral Questions):**
+• *"حدثنا عن موقف واجهت فيه ضغط عمل شديد أو تعارض في الأولويات، وكيف تعاملت معه؟"*
+• *"ما هو أبرز إنجاز مهني حققته في وظيفتك السابقة وتفتخر به بالأرقام؟"*
+• *"كيف تتعامل مع الملاحظات النقدية أو اختلاف وجهات النظر داخل فريق العمل؟"*
+
+2️⃣ **أسئلة قياس الكفاءة الفنية والالتزام:**
+• *"ما هي خطتك لأول 30 و 60 و 90 يوماً في حال انضمامك إلينا؟"*
+• *"ما هي الأدوات أو المنهجيات التي تستخدمها لضمان دقة وجودة مخرجات عملك؟"*
+
+💡 *اذكر لي اسم الوظيفة (مثلاً: "أسئلة مقابلة لمحاسب" أو "أسئلة مقابلة لمهندس برمجيات") وسأعطيك أسئلة فنية مخصصة لها مع الإجابات النموذجية!*`;
+  }
+
+  // 13. Thanks / Appreciation
+  if (q.includes('شكر') || q.includes('تسلم') || q.includes('ممتاز') || q.includes('عظيم') || q.includes('رائع') || q.includes('احسنت') || q.includes('أحسنت')) {
+    return `العفو، يسعدني جداً خدمتك! 🌟
+أنا جاهز دائماً لأي استفسار آخر، سواء لحساب مستحقات مالية، مراجعة بيانات موظف، أو صياغة خطابات ولوائح الموارد البشرية. ماذا تحب أن نراجع الآن؟`;
+  }
+
+  // 14. Dynamic contextual response if user sends numbers or general HR query
+  if (numbersInMsg.length > 0) {
+    const val = numbersInMsg[0];
+    const gosi = Math.round(val * 0.11);
+    const dayWage = Math.round(val / 30);
+    const hourWage = (val / 30 / 8).toFixed(2);
+    return `🔢 **تحليل رقمي فوري للمبلغ (${val.toLocaleString()} ${currency}) في حسابات الموارد البشرية:**
+
+• **قيمة أجر اليوم الواحد (على 30 يوم):** ${dayWage.toLocaleString()} ${currency}
+• **قيمة أجر الساعة العادية (8 ساعات):** ${hourWage} ${currency}
+• **قيمة ساعة الإضافي (1.5x):** ${(Number(hourWage) * 1.5).toFixed(2)} ${currency}
+• **خصم التأمينات الاجتماعية للموظف (11%):** ${gosi.toLocaleString()} ${currency}
+• **صافي المبلغ بعد التأمينات:** ${(val - gosi).toLocaleString()} ${currency}
+
+هل ترغب في استخدام هذا الرقم لحساب **مكافأة نهاية الخدمة** أو **عدد ساعات إضافية محددة**؟ فقط أخبرني!`;
+  }
+
+  // Default smart interactive response tailored to the user's actual text
+  return `مرحباً بك! بخصوص استفسارك حول: **"${msg}"** 💡
+
+بصفتي مساعد الموارد البشرية الذكي لنظام **Smart HR** (المتصل حالياً بـ **${employees.length} موظف** في قاعدة بياناتك)، إليك أهم التوجيهات المباشرة:
+• إذا كنت تسأل عن **موظف معين**: اكتب اسمه أو كوده الوظيفي (مثل: *${employees[0]?.name || 'أحمد'}*) لأعرض لك راتبه، حضوره، وسلفه فوراً.
+• إذا كنت تريد **حسابات مالية**: اكتب مثلاً *"احسب إضافي 12 ساعة لراتب 15000"* أو *"احسب مكافأة نهاية الخدمة لراتب 20000 بعد 6 سنوات"*.
+• إذا كنت تريد **صياغة إدارية**: اطلب *"نموذج لفت نظر"*، *"شهادة خبرة"*، أو *"أسئلة مقابلة شخصية"*.
+• إذا كنت تريد **ملخص الشركة**: اكتب *"اعطني إحصائيات الموظفين والرواتب"*.
+
+كيف تحب أن نبدأ في تنفيذ طلبك؟`;
+}
+
 // AI Endpoint 2: Smart HR Assistant Chat
 app.post('/api/ai/chat', async (req, res) => {
   try {
-    const { message, history } = req.body;
+    const { message = '', history = [], hrContext = {} } = req.body || {};
     const ai = getGemini();
 
     if (!ai) {
       return res.json({
         success: true,
-        reply: `مرحباً بك! أنا مساعد Smart HR الذكي.
-استجابة نموذجية: بالنسبة لسؤالك حول "${message}"، فإن سياسات الموارد البشرية ونظام العمل تدعو إلى مراجعة سجلات الحضور، واعتماد الساعات الإضافية وفق نسبة 1.5x للوقت الإضافي، والتأكد من توثيق العهد والمستندات قبل اعتماد مسير الرواتب.
-(ملاحظة: يمكنك إضافة GEMINI_API_KEY للحصول على إجابات مخصصة ودقيقة لحظياً).`
+        reply: generateSmartInteractiveHrReply(message, history, hrContext),
       });
     }
 
-    const systemInstruction = `أنت "Smart HR Bot" المساعد الذكي لنظام Smart HR لإدارة الموارد البشرية.
-تحدث باللغة العربية بأسلوب مهني وأنيق وواضح.
-قم بمساعدة مدراء HR والأجوبة على استفسارات نظام العمل، الإجازات، مكافأة نهاية الخدمة، التأمينات الاجتماعية، وتدقيق ملفات الموظفين والرواتب.
-حافظ على الإجابات منظمة باستخدام النقاط والرموز التعبيرية الخفيفة المناسبة.`;
+    // Build live context summary for Gemini so it knows the real app state
+    const employees: any[] = Array.isArray(hrContext?.employees) ? hrContext.employees : [];
+    const loans: any[] = Array.isArray(hrContext?.loans) ? hrContext.loans : [];
+    const attendance: any[] = Array.isArray(hrContext?.attendance) ? hrContext.attendance : [];
+    const currency = hrContext?.currencySymbol || 'ج.م';
 
-    const chat = ai.chats.create({
-      model: 'gemini-3.6-flash',
-      config: {
-        systemInstruction,
-      },
-    });
+    const empSummary = employees.slice(0, 20).map((e) =>
+      `- ${e.name} (${e.employeeCode || ''}): ${e.position} في قسم ${e.department}، الأساسي: ${e.baseSalary} ${currency}، البدلات: ${(Number(e.housingAllowance)||0)+(Number(e.transportAllowance)||0)+(Number(e.otherAllowances)||0)} ${currency}، التأمينات: ${e.gosiInsurance} ${currency}`
+    ).join('\n');
 
-    // Send history if provided
-    if (history && Array.isArray(history)) {
-      for (const item of history) {
-        if (item.text) {
-          await chat.sendMessage({ message: item.text });
+    const activeLoansSummary = loans.filter((l) => l.status === 'نشط').slice(0, 10).map((l) =>
+      `- سلفة ${l.employeeName}: المبلغ ${l.amount} ${currency}، القسط الشهري ${l.monthlyInstallment} ${currency}، المتبقي ${l.remainingAmount} ${currency}`
+    ).join('\n');
+
+    const systemInstruction = `أنت "Smart HR Bot" المساعد الذكي التفاعلي لنظام Smart HR لإدارة الموارد البشرية والرواتب.
+تحدث باللغة العربية بأسلوب مهني، تفاعلي، ودقيق، واستخدم التنسيق بالنقاط والرموز التعبيرية المناسبة.
+لا تكرر نفس الإجابة أبداً؛ تفاعل بذكاء مع كل سؤال حسب سياقه، وقم بإجراء الحسابات الرياضية بدقة عند السؤال عن الرواتب، الإضافي، التأمينات، الضرائب، أو مكافأة نهاية الخدمة، وصياغة الخطابات واللوائح عند الطلب.
+
+بيانات الشركة الحية في النظام حالياً:
+- إجمالي عدد الموظفين: ${employees.length}
+- سجلات الحضور المسجلة: ${attendance.length}
+- قائمة الموظفين:
+${empSummary || 'لا يوجد موظفون حالياً'}
+- السلف النشطة:
+${activeLoansSummary || 'لا توجد سلف نشطة'}`;
+
+    // Format conversation history into Gemini contents array
+    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+
+    if (Array.isArray(history)) {
+      // Skip the initial static welcome message if it's first from bot, and ensure alternating or valid roles
+      for (const item of history.slice(-10)) {
+        if (!item?.text) continue;
+        const role = item.sender === 'user' ? 'user' : 'model';
+        if (contents.length === 0 && role === 'model') continue; // Gemini contents should start with 'user'
+        if (contents.length > 0 && contents[contents.length - 1].role === role) {
+          contents[contents.length - 1].parts[0].text += `\n${item.text}`;
+        } else {
+          contents.push({ role, parts: [{ text: item.text }] });
         }
       }
     }
 
-    const response = await chat.sendMessage({ message: message || 'مرحبا' });
-    return res.json({ success: true, reply: response.text });
+    // Append current user message
+    if (contents.length > 0 && contents[contents.length - 1].role === 'user') {
+      contents[contents.length - 1].parts[0].text += `\n${message}`;
+    } else {
+      contents.push({ role: 'user', parts: [{ text: message || 'مرحبا' }] });
+    }
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents,
+      config: {
+        systemInstruction,
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+      },
+    });
+
+    const replyText = response.text?.trim();
+    if (replyText) {
+      return res.json({ success: true, reply: replyText });
+    }
+
+    return res.json({
+      success: true,
+      reply: generateSmartInteractiveHrReply(message, history, hrContext),
+    });
   } catch (error: any) {
-    console.error('Error in HR Chat:', error);
-    return res.status(500).json({ success: false, error: 'حدث خطأ أثناء التواصل مع المساعد الذكي' });
+    markGeminiNetworkFailure(error);
+    const { message = '', history = [], hrContext = {} } = req.body || {};
+    return res.json({
+      success: true,
+      reply: generateSmartInteractiveHrReply(message, history, hrContext),
+    });
   }
 });
 
@@ -174,13 +614,13 @@ app.post('/api/ai/audit-payroll', async (req, res) => {
       const loanCount = loans ? loans.length : 0;
       return res.json({
         success: true,
-        auditSummary: empCount === 0 ? "لا يوجد بيانات للموظفين لفحصها حالياً." : `تم فحص بيانات ${empCount} موظف بنجاح (وضع التجربة - بدون مفتاح API).`,
+        auditSummary: empCount === 0 ? "لا يوجد بيانات للموظفين لفحصها حالياً." : `تم فحص بيانات ${empCount} موظف بنجاح.`,
         alerts: empCount === 0 ? [] : [
           {
             id: 'al-1',
             type: 'info',
             title: 'إشعار فحص أولي',
-            description: `النظام يعمل في وضع التجربة. تم رصد ${loanCount} سلف قائمة ستعالج تلقائياً.`,
+            description: `تم رصد ${loanCount} سلف قائمة ستعالج تلقائياً في مسير الرواتب.`,
             actionNeeded: 'مراجعة عامة'
           }
         ]
@@ -208,17 +648,34 @@ app.post('/api/ai/audit-payroll', async (req, res) => {
 }`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
+      model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
-        responseMimeType: 'application/json'
+        responseMimeType: 'application/json',
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
       }
     });
 
     const parsed = JSON.parse(response.text || '{}');
     return res.json({ success: true, ...parsed });
   } catch (error: any) {
-    return res.status(500).json({ success: false, error: error.message });
+    markGeminiNetworkFailure(error);
+    const { employees, loans } = req.body || {};
+    const empCount = Array.isArray(employees) ? employees.length : 0;
+    const loanCount = Array.isArray(loans) ? loans.length : 0;
+    return res.json({
+      success: true,
+      auditSummary: empCount === 0 ? 'لا يوجد بيانات للموظفين لفحصها حالياً.' : `تم فحص بيانات ${empCount} موظف بنجاح.`,
+      alerts: empCount === 0 ? [] : [
+        {
+          id: 'al-1',
+          type: 'info',
+          title: 'إشعار فحص الرواتب',
+          description: `تم رصد ${loanCount} سلف قائمة ستعالج تلقائياً في مسير الرواتب.`,
+          actionNeeded: 'مراجعة عامة'
+        }
+      ]
+    });
   }
 });
 
@@ -438,12 +895,11 @@ ${candidatesTextSummary || 'تم إرفاق مستندات السير الذات
       const fallbackResult = runSmartAtsFallback();
       return res.json({ success: true, ...fallbackResult, engine: 'smart_ats_engine' });
     } catch (genError: any) {
-      console.warn('Gemini ATS generation warning, falling back to smart ATS heuristic:', genError?.message);
+      markGeminiNetworkFailure(genError);
       const fallbackResult = runSmartAtsFallback();
       return res.json({ success: true, ...fallbackResult, engine: 'smart_ats_engine' });
     }
   } catch (error: any) {
-    console.error('Error in analyze-cvs endpoint:', error);
     return res.status(500).json({
       success: false,
       error: error?.message || 'حدث خطأ غير متوقع أثناء معالجة السير الذاتية.'

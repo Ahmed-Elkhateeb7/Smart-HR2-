@@ -994,7 +994,15 @@ export default function App() {
           )}
 
           {(activeTab === 'ai-assistant' || (activeTab as string) === 'ai_assistant') && (
-            <AiAssistantView />
+            <AiAssistantView
+              employees={employees}
+              attendance={attendanceRecords}
+              payroll={payrollRecords}
+              loans={loans}
+              assets={assets}
+              departments={departments}
+              currencySymbol={currencySymbol}
+            />
           )}
 
           {(activeTab === 'cv-analysis' || (activeTab as string) === 'cv_analysis') && (
