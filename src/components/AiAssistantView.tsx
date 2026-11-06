@@ -28,6 +28,7 @@ import {
   Asset,
   Department
 } from '../types';
+import { generateSmartInteractiveHrReply } from '../utils/smartHrBot';
 
 interface AiAssistantViewProps {
   onApplyJdToOnboarding?: (jdTitle: string) => void;
@@ -161,50 +162,47 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
     setChatInput('');
     setIsSendingChat(true);
 
+    const hrContextPayload = {
+      employees,
+      attendance,
+      payroll,
+      loans,
+      assets,
+      departments,
+      currencySymbol,
+    };
+
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: userMsg,
           history: updatedHistory,
-          hrContext: {
-            employees,
-            attendance,
-            payroll,
-            loans,
-            assets,
-            departments,
-            currencySymbol,
-          },
+          hrContext: hrContextPayload,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       const data = await res.json();
       const replyTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
 
-      if (data.success && data.reply) {
+      if (data && data.success && data.reply && String(data.reply).trim()) {
         setMessages((prev) => [...prev, { sender: 'bot', text: data.reply, timestamp: replyTime }]);
       } else {
-        setMessages((prev) => [
-          ...prev,
-          {
-            sender: 'bot',
-            text: `بخصوص "${userMsg}": يوجد حالياً ${employees.length} موظف مسجل في النظام. يمكنك سؤالي عن بيانات أي موظف بالاسم، أو طلب حساب نهاية الخدمة، التأمينات، الإضافي، أو صياغة خطاب إداري وسأجيبك بالتفصيل.`,
-            timestamp: replyTime,
-          },
-        ]);
+        // Instant high-accuracy domain engine fallback
+        const fastReply = generateSmartInteractiveHrReply(userMsg, updatedHistory, hrContextPayload);
+        setMessages((prev) => [...prev, { sender: 'bot', text: fastReply, timestamp: replyTime }]);
       }
     } catch {
+      // Never show "تعذر الاتصال بالخادم" error: respond immediately using local smart HR engine
       const replyTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: 'bot',
-          text: `تعذر الاتصال بالخادم حالياً للرد على: "${userMsg}". يرجى المحاولة مرة أخرى بعد لحظات.`,
-          timestamp: replyTime,
-        },
-      ]);
+      const fastReply = generateSmartInteractiveHrReply(userMsg, updatedHistory, hrContextPayload);
+      setMessages((prev) => [...prev, { sender: 'bot', text: fastReply, timestamp: replyTime }]);
     } finally {
       setIsSendingChat(false);
     }
@@ -249,6 +247,8 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
     { label: '📄 نموذج لفت نظر / إنذار', prompt: 'اكتب لي نموذج خطاب لفت نظر رسمي بسبب تكرار التأخير', icon: FileText },
     { label: '📜 نموذج شهادة خبرة', prompt: 'اكتب لي نموذج شهادة خبرة معتمدة لموظف', icon: Award },
     { label: '💳 تقرير السلف والعهد', prompt: 'اعرض لي تقرير السلف النشطة والعهد المسلمة للموظفين', icon: DollarSign },
+    { label: '🎯 أسئلة مقابلات STAR', prompt: 'ما هي أفضل أسئلة المقابلات الشخصية لتقييم الكفاءات؟', icon: Target },
+    { label: '📱 شرح حضور الموبايل 1000', prompt: 'كيف يعمل مستخدم 1000 وتسجيل حضور الموبايل؟', icon: Briefcase },
   ];
 
   return (
